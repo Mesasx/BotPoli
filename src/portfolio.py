@@ -11,10 +11,10 @@ realise PnL against that average and never change it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
 
-from .models import BUY, SELL, Order, Position, utcnow
+from .models import BUY, SELL, Order, Position
 
 
 @dataclass
@@ -149,7 +149,7 @@ class Portfolio:
 
     # -- construction -------------------------------------------------------
     @classmethod
-    def from_orders(cls, initial_balance: float, orders: Iterable[Order]) -> "Portfolio":
+    def from_orders(cls, initial_balance: float, orders: Iterable[Order]) -> Portfolio:
         portfolio = cls(initial_balance)
         for order in orders:
             portfolio.apply_order(order)

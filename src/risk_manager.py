@@ -32,14 +32,22 @@ class RiskManager:
         snap: MarketSnapshot,
         portfolio: Portfolio,
         daily_realized_pnl: float = 0.0,
+        weekly_realized_pnl: float = 0.0,
     ) -> RiskDecision:
         if signal.signal_type == HOLD:
             return RiskDecision(False, "hold signal - no action")
         if signal.signal_type == SELL:
             return self._evaluate_sell(signal, portfolio)
         if signal.signal_type == BUY:
-            return self._evaluate_buy(signal, snap, portfolio, daily_realized_pnl)
+            return self._evaluate_buy(
+                signal, snap, portfolio, daily_realized_pnl, weekly_realized_pnl
+            )
         return RiskDecision(False, f"unknown signal type {signal.signal_type}")
+
+    def trading_halted(self, weekly_realized_pnl: float) -> bool:
+        """Weekly circuit breaker: once the weekly loss cap is hit, no new buys
+        are allowed until the next ISO week resets the realised PnL window."""
+        return weekly_realized_pnl <= -self.config.max_weekly_loss
 
     # -- sell ---------------------------------------------------------------
     def _evaluate_sell(self, signal: Signal, portfolio: Portfolio) -> RiskDecision:
@@ -57,8 +65,17 @@ class RiskManager:
         snap: MarketSnapshot,
         portfolio: Portfolio,
         daily_realized_pnl: float,
+        weekly_realized_pnl: float = 0.0,
     ) -> RiskDecision:
         cfg = self.config
+
+        # Weekly loss circuit breaker (hard halt until the week rolls over)
+        if self.trading_halted(weekly_realized_pnl):
+            return RiskDecision(
+                False,
+                f"weekly loss limit hit ({weekly_realized_pnl:.2f} <= "
+                f"-{cfg.max_weekly_loss:.2f}); trading halted this week",
+            )
 
         # Daily loss circuit breaker
         if daily_realized_pnl <= -cfg.max_daily_loss:
@@ -83,6 +100,10 @@ class RiskManager:
 
         # Start from the per-trade cap, then shrink to satisfy every other cap.
         size = cfg.max_trade_size
+
+        # Per-trade cap as a fraction of current equity (0 disables it)
+        if cfg.max_trade_pct > 0:
+            size = min(size, cfg.max_trade_pct * portfolio.equity())
 
         # Cash available
         size = min(size, portfolio.cash)

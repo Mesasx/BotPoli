@@ -12,7 +12,7 @@ from datetime import timedelta
 import pytest
 
 from src.config import Config
-from src.models import BUY, SELL, MarketSnapshot, Order, utcnow
+from src.models import BUY, MarketSnapshot, Order, utcnow
 
 
 @pytest.fixture
@@ -21,8 +21,10 @@ def config(tmp_path) -> Config:
         initial_balance=1000.0,
         allow_no=False,
         max_trade_size=5.0,
+        max_trade_pct=0.0,          # disabled here; covered by dedicated tests
         max_position_size=25.0,
         max_daily_loss=20.0,
+        max_weekly_loss=50.0,
         max_open_positions=5,
         max_market_exposure=25.0,
         max_total_exposure=100.0,
@@ -74,9 +76,10 @@ def make_order(side=BUY, token_id="tok_yes", fill_price=0.40, shares=10.0,
 class FakeClient:
     """Stand-in for :class:`PolymarketClient` returning canned data."""
 
-    def __init__(self, markets=None, quotes=None):
+    def __init__(self, markets=None, quotes=None, markets_by_id=None):
         self._markets = markets or []
         self._quotes = quotes or {}
+        self._markets_by_id = markets_by_id or {}
 
     def get_markets(self, **_kwargs):
         return self._markets
@@ -89,6 +92,9 @@ class FakeClient:
 
     def get_midpoint(self, token_id):
         return self.get_quote(token_id)["midpoint"]
+
+    def get_market(self, market_id):
+        return self._markets_by_id.get(market_id)
 
 
 def sample_gamma_market() -> dict:

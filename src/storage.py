@@ -11,9 +11,9 @@ back the dashboard and CSV export.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
@@ -28,13 +28,20 @@ _PAPER_TABLES = ["signals", "orders", "equity_snapshots", "positions"]
 _ALL_TABLES = ["market_snapshots", *_PAPER_TABLES]
 
 
+def week_start(now: datetime | None = None) -> datetime:
+    """Return the UTC start (Monday 00:00) of the ISO week containing ``now``."""
+    now = now or datetime.now(UTC)
+    monday = now - timedelta(days=now.weekday())
+    return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
         return None
@@ -185,7 +192,7 @@ class Storage:
                     requested_price=r["requested_price"], fill_price=r["fill_price"],
                     shares=r["shares"], value_usdc=r["value_usdc"], slippage=r["slippage"],
                     fee=r["fee"], status=r["status"], reason=r["reason"] or "",
-                    timestamp=_parse_dt(r["ts"]) or datetime.now(timezone.utc),
+                    timestamp=_parse_dt(r["ts"]) or datetime.now(UTC),
                 )
             )
         return orders
@@ -205,7 +212,7 @@ class Storage:
 
     def daily_realized_pnl(self, day: datetime | None = None) -> float:
         """Sum realised PnL from SELL orders for a given UTC day (default today)."""
-        day = day or datetime.now(timezone.utc)
+        day = day or datetime.now(UTC)
         prefix = day.strftime("%Y-%m-%d")
         # Replay all orders so realised PnL is computed against the running avg price,
         # then keep only the deltas from sells that happened on the target day.
@@ -217,6 +224,48 @@ class Storage:
             if o.side == "SELL" and ts.startswith(prefix):
                 realized += delta
         return realized
+
+    def realized_pnl_since(self, since: datetime) -> float:
+        """Sum realised PnL from SELL orders at or after ``since`` (UTC).
+
+        Replays every order so realised PnL is computed against the running
+        average cost, then keeps only the deltas from sells on/after ``since``.
+        """
+        portfolio = Portfolio(self.config.initial_balance)
+        realized = 0.0
+        for o in self.load_orders():
+            delta = portfolio.apply_order(o)
+            ts = o.timestamp
+            if o.side == "SELL" and ts is not None and ts >= since:
+                realized += delta
+        return realized
+
+    def weekly_realized_pnl(self, now: datetime | None = None) -> float:
+        """Realised PnL for the current ISO week (Monday 00:00 UTC onwards)."""
+        return self.realized_pnl_since(week_start(now))
+
+    def price_history(self, token_id: str, limit: int = 5) -> list[float]:
+        """Most recent ``limit`` midpoints for a token, oldest first.
+
+        Used to gauge short-term trend for trend-based exits.
+        """
+        cur = self.conn.execute(
+            "SELECT midpoint FROM market_snapshots WHERE token_id=? "
+            "ORDER BY id DESC LIMIT ?",
+            (token_id, limit),
+        )
+        mids = [r["midpoint"] for r in cur.fetchall() if r["midpoint"] is not None]
+        return list(reversed(mids))
+
+    def category_map(self) -> dict[str, str]:
+        """Map token_id -> category from the latest snapshot per token."""
+        df = self.latest_market_snapshots()
+        if df.empty or "category" not in df.columns:
+            return {}
+        return {
+            str(r["token_id"]): (r["category"] or "")
+            for _, r in df.iterrows()
+        }
 
     def get_df(self, table: str) -> pd.DataFrame:
         if table not in _ALL_TABLES:
@@ -238,7 +287,7 @@ class Storage:
         out_dir = out_dir or (self.db_path.parent / "exports")
         out_dir.mkdir(parents=True, exist_ok=True)
         written = []
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         for table in _ALL_TABLES:
             df = self.get_df(table)
             path = out_dir / f"{table}_{stamp}.csv"

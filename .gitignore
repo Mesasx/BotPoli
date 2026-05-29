@@ -13,5 +13,10 @@ venv/
 data/*.db
 data/*.db-journal
 data/exports/*.csv
+data/reports/*.md
 logs/*.log
 logs/*.log.*
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/

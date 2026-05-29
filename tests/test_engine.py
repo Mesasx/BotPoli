@@ -63,3 +63,35 @@ def test_run_cycle_exits_on_take_profit(config):
         assert pf.win_rate() == 1.0
     finally:
         storage.close()
+
+
+def test_run_cycle_settles_resolved_market(config):
+    import json
+    market = sample_gamma_market()
+    buy_quotes = {
+        "tok_yes": {"best_bid": 0.39, "best_ask": 0.40, "midpoint": 0.395, "spread": 0.01},
+        "tok_no": {"best_bid": 0.59, "best_ask": 0.60, "midpoint": 0.595, "spread": 0.01},
+    }
+    storage = Storage(config)
+    try:
+        # Cycle 1: open a YES position at ~0.40
+        engine = PaperEngine(config, storage, FakeClient([market], buy_quotes))
+        engine.run_cycle()
+        assert storage.load_portfolio().open_position_count() == 1
+
+        # Cycle 2: the market has RESOLVED with YES the winner -> settle to 1.0
+        resolved = dict(market)
+        resolved["closed"] = True
+        resolved["umaResolutionStatus"] = "resolved"
+        resolved["outcomePrices"] = json.dumps(["1", "0"])
+        client2 = FakeClient([], buy_quotes, markets_by_id={"12345": resolved})
+        engine2 = PaperEngine(config, storage, client2)
+        summary = engine2.run_cycle()
+
+        assert summary["settled"] == 1
+        pf = storage.load_portfolio()
+        assert pf.open_position_count() == 0
+        # Bought ~12.5 shares at ~0.40 (=$5), settled at 1.0 -> solid profit
+        assert pf.realized_pnl > 6.0
+    finally:
+        storage.close()
