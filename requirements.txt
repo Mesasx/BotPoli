@@ -1,0 +1,20 @@
+# Core HTTP client for Polymarket public read-only APIs
+httpx>=0.27,<1.0
+
+# Data analysis & storage helpers
+pandas>=2.0
+
+# Charts for the Streamlit dashboard
+plotly>=5.20
+
+# Local dashboard
+streamlit>=1.33
+
+# .env loading
+python-dotenv>=1.0
+
+# Pretty CLI tables
+tabulate>=0.9
+
+# Tests
+pytest>=8.0
