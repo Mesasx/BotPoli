@@ -10,13 +10,13 @@ Pipeline:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .config import Config
 from .logger import get_logger
 from .models import MarketSnapshot, utcnow
-from .polymarket_client import PolymarketClient, parse_json_field, _to_float
+from .polymarket_client import PolymarketClient, _to_float, parse_json_field
 
 log = get_logger("scanner")
 
@@ -28,7 +28,7 @@ def _parse_end_date(value: Any) -> datetime | None:
         text = str(value).replace("Z", "+00:00")
         dt = datetime.fromisoformat(text)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
         return None

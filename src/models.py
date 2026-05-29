@@ -8,11 +8,11 @@ returned by Polymarket; ``shares`` is the outcome-token quantity.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def iso(dt: datetime | None) -> str | None:
@@ -44,6 +44,10 @@ class MarketSnapshot:
     end_date: datetime | None
     hours_to_close: float | None
     timestamp: datetime = field(default_factory=utcnow)
+    # Recent adverse/favourable move in the mark price, as a fraction
+    # (e.g. -0.30 = mid dropped 30% over the trend window). Computed per cycle
+    # from stored history; transient (not persisted). ``None`` = unknown.
+    trend: float | None = None
 
     @property
     def mid(self) -> float:

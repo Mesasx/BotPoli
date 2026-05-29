@@ -16,13 +16,14 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 # Allow `streamlit run src/dashboard.py` (script run) to import the package.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config  # noqa: E402
+from src.report import generate_weekly_report  # noqa: E402
+from src.risk_manager import RiskManager  # noqa: E402
 from src.storage import Storage  # noqa: E402
 
 st.set_page_config(page_title="Polymarket Paper Bot", layout="wide", page_icon="📈")
@@ -84,7 +85,17 @@ def main() -> None:
     equity = portfolio.equity()
     total_pnl = equity - cfg.initial_balance
     daily_pnl = storage.daily_realized_pnl()
+    weekly_pnl = storage.weekly_realized_pnl()
     max_dd = equity_df["drawdown"].max() if not equity_df.empty else 0.0
+
+    # Weekly circuit-breaker banner.
+    halted = RiskManager(cfg).trading_halted(weekly_pnl)
+    if halted:
+        st.error(
+            f"⛔ Trading DETENIDO esta semana: la pérdida semanal "
+            f"({_money(weekly_pnl)}) alcanzó el límite de {_money(-cfg.max_weekly_loss)}. "
+            "Se reanudará automáticamente la próxima semana ISO."
+        )
 
     st.subheader("Resumen")
     c1, c2, c3, c4 = st.columns(4)
@@ -95,15 +106,39 @@ def main() -> None:
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("PnL diario (hoy)", _money(daily_pnl))
-    c6.metric("Drawdown máx.", f"{max_dd*100:.1f}%")
-    c7.metric("Win rate", f"{portfolio.win_rate()*100:.1f}%")
-    c8.metric("Operaciones totales", f"{len(orders_df[orders_df.get('status', '') == 'FILLED']) if not orders_df.empty else 0}")
+    c6.metric("PnL semanal", _money(weekly_pnl))
+    c7.metric("Drawdown máx.", f"{max_dd*100:.1f}%")
+    c8.metric("Win rate", f"{portfolio.win_rate()*100:.1f}%")
 
     c9, c10, c11, c12 = st.columns(4)
     c9.metric("Posiciones abiertas", f"{portfolio.open_position_count()}")
     c10.metric("Exposición total", _money(portfolio.total_exposure()))
     c11.metric("Cash", _money(portfolio.cash))
-    c12.metric("PnL no realizado", _money(portfolio.unrealized_pnl()))
+    sharpe = _sharpe(equity_df)
+    c12.metric("Sharpe (diario, aprox.)", f"{sharpe:.2f}" if sharpe is not None else "n/a")
+    n_filled = len(orders_df[orders_df.get("status", "") == "FILLED"]) if not orders_df.empty else 0
+    st.caption(
+        f"Operaciones simuladas (fills): {n_filled} · "
+        f"Operaciones cerradas: {len(portfolio.closed_trades)}"
+    )
+
+    # -- Weekly report ------------------------------------------------------
+    with st.expander("📊 Informe semanal", expanded=False):
+        try:
+            report = generate_weekly_report(storage, cfg)
+            st.markdown(report.to_markdown())
+            if report.exposure_by_category:
+                cat_df = pd.DataFrame(
+                    {"categoría": list(report.exposure_by_category.keys()),
+                     "exposición": list(report.exposure_by_category.values())}
+                )
+                st.plotly_chart(
+                    px.pie(cat_df, names="categoría", values="exposición",
+                           title="Exposición por categoría"),
+                    use_container_width=True,
+                )
+        except Exception as exc:  # pragma: no cover - defensive UI guard
+            st.warning(f"No se pudo generar el informe: {exc}")
 
     # -- Charts -------------------------------------------------------------
     st.subheader("Gráficos")
@@ -156,7 +191,6 @@ def main() -> None:
         else:
             st.info("Sin posiciones abiertas.")
     with g6:
-        filled = orders_df[orders_df["status"] == "FILLED"] if not orders_df.empty else pd.DataFrame()
         if not positions_df.empty and (positions_df["status"] == "closed").any():
             closed = positions_df[positions_df["status"] == "closed"].copy()
             wins = int((closed["realized_pnl"] > 0).sum())
@@ -222,6 +256,20 @@ def main() -> None:
         st.info("Sin mercados escaneados. Ejecuta `python -m src.main scan`.")
 
     storage.close()
+
+
+def _sharpe(equity_df: pd.DataFrame) -> float | None:
+    """Rough annualised Sharpe from the equity curve's per-snapshot returns.
+
+    Educational approximation: not a substitute for a proper risk-adjusted
+    metric, but a useful at-a-glance number on the dashboard.
+    """
+    if equity_df.empty or "equity" not in equity_df.columns or len(equity_df) < 3:
+        return None
+    rets = equity_df["equity"].astype(float).pct_change().dropna()
+    if rets.empty or rets.std() == 0:
+        return None
+    return float((rets.mean() / rets.std()) * (252 ** 0.5))
 
 
 def _unique(df: pd.DataFrame, col: str) -> list:

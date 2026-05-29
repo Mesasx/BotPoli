@@ -61,7 +61,6 @@ class SimpleThresholdStrategy(Strategy):
     name = "simple_threshold"
 
     def generate(self, snap: MarketSnapshot, position: Position | None) -> Signal:
-        cfg = self.config
         holding = position is not None and position.shares > 1e-9
 
         if holding:
@@ -131,6 +130,17 @@ class SimpleThresholdStrategy(Strategy):
             return self._signal(
                 snap, SELL, sell_price,
                 f"stop loss ({ret*100:.1f}% <= -{cfg.stop_loss_pct*100:.0f}%)",
+            )
+        # Trend exit: bail out on a strong adverse move even before the hard
+        # stop-loss is hit. Skipped when trend is unknown or disabled.
+        if (
+            cfg.trend_exit_pct > 0
+            and snap.trend is not None
+            and snap.trend <= -cfg.trend_exit_pct
+        ):
+            return self._signal(
+                snap, SELL, sell_price,
+                f"trend exit (mid {snap.trend*100:.1f}% <= -{cfg.trend_exit_pct*100:.0f}%)",
             )
 
         return self._signal(

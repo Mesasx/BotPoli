@@ -94,6 +94,28 @@ class PolymarketClient:
             data = data.get("data", [])
         return data if isinstance(data, list) else []
 
+    def get_market(self, market_id: str) -> dict[str, Any] | None:
+        """Fetch a single market by its Gamma id (used to check resolution).
+
+        Tries ``/markets/{id}`` first, then falls back to ``/markets?id=`` and a
+        slug lookup. Returns ``None`` when the market can't be found. This is the
+        path used to detect that a market we hold has *resolved* (closed + final
+        outcome prices), so the position can be settled to 0/1.
+        """
+        if not market_id:
+            return None
+        data = self._get(self.config.gamma_api_url, f"/markets/{market_id}")
+        if isinstance(data, dict) and (data.get("id") or data.get("conditionId")):
+            return data
+        # Fallback: query endpoints that accept id / slug filters.
+        for key in ("id", "slug"):
+            data = self._get(self.config.gamma_api_url, "/markets", {key: market_id})
+            if isinstance(data, dict):
+                data = data.get("data", [])
+            if isinstance(data, list) and data:
+                return data[0]
+        return None
+
     # -- CLOB: live pricing -------------------------------------------------
     def get_price(self, token_id: str, side: str = "buy") -> float | None:
         """Best price for a side. ``side='buy'`` -> best ask, ``side='sell'`` -> best bid."""
@@ -155,7 +177,7 @@ class PolymarketClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "PolymarketClient":
+    def __enter__(self) -> PolymarketClient:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -180,8 +202,8 @@ def _best_of_book(book: dict[str, Any]) -> tuple[float | None, float | None]:
     bids = book.get("bids") or []
     asks = book.get("asks") or []
 
-    bid_prices = [_to_float(lvl.get("price")) for lvl in bids if _to_float(lvl.get("price")) is not None]
-    ask_prices = [_to_float(lvl.get("price")) for lvl in asks if _to_float(lvl.get("price")) is not None]
+    bid_prices: list[float] = [p for p in (_to_float(lvl.get("price")) for lvl in bids) if p is not None]
+    ask_prices: list[float] = [p for p in (_to_float(lvl.get("price")) for lvl in asks) if p is not None]
 
     best_bid = max(bid_prices) if bid_prices else None
     best_ask = min(ask_prices) if ask_prices else None

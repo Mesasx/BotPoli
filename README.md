@@ -136,17 +136,22 @@ por defecto). Variables principales:
 |---|---|
 | `INITIAL_PAPER_BALANCE_USDC` | Saldo inicial simulado |
 | `ALLOW_NO` | Permitir comprar el outcome NO (por defecto `false`) |
-| `MAX_TRADE_SIZE_USDC` | Tamaño máximo por operación |
+| `MAX_TRADE_SIZE_USDC` | Tamaño máximo por operación (USDC) |
+| `MAX_TRADE_PCT` | Tope por operación como **fracción del equity** (0 = off) |
 | `MAX_POSITION_SIZE_USDC` | Exposición máxima por posición |
 | `MAX_MARKET_EXPOSURE_USDC` / `MAX_TOTAL_EXPOSURE_USDC` | Topes de exposición |
 | `MAX_OPEN_POSITIONS` | Nº máximo de posiciones abiertas |
-| `MAX_DAILY_LOSS_USDC` | Cortacircuitos de pérdida diaria |
+| `MAX_DAILY_LOSS_USDC` | Cortacircuitos de pérdida **diaria** |
+| `MAX_WEEKLY_LOSS_USDC` | Cortacircuitos de pérdida **semanal** (detiene compras toda la semana) |
 | `MAX_SPREAD` / `MIN_LIQUIDITY` | Filtros de calidad de mercado |
 | `MIN_HOURS_TO_CLOSE` / `EXIT_HOURS_BEFORE_CLOSE` | Ventanas temporales |
 | `ENTRY_PRICE_MAX` | Precio máximo de entrada para BUY |
 | `TAKE_PROFIT_PCT` / `STOP_LOSS_PCT` | Salidas |
+| `TREND_WINDOW` / `TREND_EXIT_PCT` | Salida por cambio fuerte de tendencia |
+| `SETTLE_RESOLVED` | Liquidar mercados resueltos a 0/1 (settle) |
 | `SLIPPAGE_BPS` / `FEE_BPS` | Realismo de la simulación |
 | `POLL_INTERVAL_SECONDS` | Periodicidad del bucle `paper` |
+| `REPORTS_DIR` | Carpeta donde se guardan los informes semanales |
 
 ## 5. Ejecución (CLI)
 
@@ -156,6 +161,8 @@ python -m src.main paper           # bucle de paper trading (Ctrl+C para parar)
 python -m src.main paper --once    # un solo ciclo
 python -m src.main paper --iterations 10
 python -m src.main status          # resumen de la cartera
+python -m src.main report          # informe semanal por consola
+python -m src.main report --save   # informe semanal + guarda .md en data/reports/
 python -m src.main dashboard       # lanza el dashboard de Streamlit
 python -m src.main export          # exporta todas las tablas a CSV (data/exports/)
 python -m src.main reset-paper     # borra el estado de paper trading
@@ -195,20 +202,80 @@ Muestra:
   `best_ask ≤ ENTRY_PRICE_MAX`, `spread ≤ MAX_SPREAD`,
   `liquidity ≥ MIN_LIQUIDITY` y faltan `≥ MIN_HOURS_TO_CLOSE` para el cierre.
 - **Salida (SELL)**: take profit (`≥ TAKE_PROFIT_PCT`), stop loss
-  (`≤ -STOP_LOSS_PCT`) o cierre antes del vencimiento
-  (`≤ EXIT_HOURS_BEFORE_CLOSE`).
+  (`≤ -STOP_LOSS_PCT`), cierre antes del vencimiento
+  (`≤ EXIT_HOURS_BEFORE_CLOSE`) o **cambio fuerte de tendencia**
+  (la mid cae `≥ TREND_EXIT_PCT` sobre la ventana `TREND_WINDOW`).
+- **Liquidación por resolución**: independientemente de la estrategia, el motor
+  liquida automáticamente cualquier posición cuyo mercado se haya **resuelto**
+  (settle a 1.0 si ganó, 0.0 si perdió) — ver §12.
+
+## 7-bis. Operación autónoma y gestión de riesgo
+
+El bot está pensado para correr **solo** durante semanas (`python -m src.main
+paper`). Cada ciclo: liquida resueltos → marca a mercado → calcula tendencia →
+decide entradas/salidas → aplica riesgo → simula fills → persiste → snapshot de
+equity. Controles de riesgo (todos en `.env`):
+
+- **Por operación**: `MAX_TRADE_SIZE_USDC` **y** `MAX_TRADE_PCT` (% del equity).
+- **Posiciones**: `MAX_OPEN_POSITIONS`, `MAX_POSITION_SIZE_USDC`.
+- **Exposición**: `MAX_MARKET_EXPOSURE_USDC`, `MAX_TOTAL_EXPOSURE_USDC`.
+- **Stop diario**: `MAX_DAILY_LOSS_USDC` (bloquea nuevas compras ese día).
+- **Stop semanal**: `MAX_WEEKLY_LOSS_USDC`. Si la pérdida **realizada** de la
+  semana ISO supera el límite, el bot **deja de abrir posiciones** hasta el lunes
+  siguiente (las salidas/de-risking siguen permitidas). El dashboard muestra un
+  banner ⛔ cuando esto ocurre.
+
+## 12. Resolución de mercados (settle 0/1)
+
+Cuando un mercado de Polymarket se resuelve, cada token vale exactamente 1 USDC
+(si fue el outcome ganador) o 0 USDC (si perdió). `src/resolution.py`:
+
+1. Para cada posición abierta consulta su mercado (`get_market`).
+2. Detecta resolución: `closed`/`umaResolutionStatus=resolved` **y** `outcomePrices`
+   colapsados a un claro 0/1.
+3. Genera una orden de **liquidación** al precio final (sin slippage ni fees: la
+   resolución paga el nominal exacto), realizando el PnL y cerrando la posición.
+
+Todo sigue siendo **paper**: solo observa datos públicos y registra fills simulados.
+
+## 13. Informe semanal automático
+
+`python -m src.main report [--save]` (o la pestaña "Informe semanal" del
+dashboard) genera un resumen pensado para revisar el bot en ~15 min/semana:
+
+- saldo inicial y final, PnL semanal (realizado y por equity), PnL total;
+- nº de operaciones, ganadoras/perdedoras, win rate, drawdown máximo;
+- exposición total, por mercado y **por categoría**;
+- mejores y peores operaciones;
+- explicación sencilla de por qué ganó o perdió;
+- errores/comportamientos raros (p. ej. órdenes rechazadas, cash negativo);
+- recomendación concreta de ajustes para la semana siguiente.
+
+> Sugerencia: programa `python -m src.main report --save` con `cron` los lunes
+> para archivar un `.md` por semana en `data/reports/`.
 
 ## 8. Tests
 
 ```bash
-pytest            # 44 tests
+pytest                       # 60 tests
+# o el set completo de CI (lint + tipos + tests):
+pip install -r requirements-dev.txt
+ruff check src tests && mypy src && pytest -q
 ```
 
-Cubren: estrategia (entradas/salidas/rechazos), risk manager (topes y
-cortacircuitos), paper executor (slippage/fees/rechazos), portfolio (PnL,
-equity, coste medio, exposición, win rate), storage (persistencia, replay,
-PnL diario, reset/export), parsing de mercados Gamma y un test **end-to-end**
-del ciclo completo (abrir posición + salir por take profit).
+Cubren: estrategia (entradas/salidas/rechazos + salida por tendencia), risk
+manager (topes, cortacircuitos diario y **semanal**, tope por % del equity),
+paper executor (slippage/fees/rechazos), portfolio (PnL, equity, coste medio,
+exposición, win rate), storage (persistencia, replay, PnL diario/semanal,
+reset/export), **resolución 0/1**, **informe semanal**, parsing de mercados
+Gamma y tests **end-to-end** del ciclo completo (abrir posición, salir por take
+profit y **liquidar un mercado resuelto**).
+
+### CI/CD (GitHub Actions)
+
+`.github/workflows/ci.yml` corre en cada push/PR sobre Python 3.11 y 3.12:
+`ruff` (lint), `mypy` (tipos) y `pytest`. La configuración de las herramientas
+vive en `pyproject.toml`.
 
 ## 9. Cómo añadir una nueva estrategia
 
@@ -245,6 +312,47 @@ el `RiskManager`. Solo decide la intención y la razón.
 - Solo peticiones **GET públicas**; no hay endpoints de escritura/órdenes.
 - `LIVE_TRADING=true` o `PAPER_TRADING=false` **abortan el arranque** con un
   error explícito (ver `config.load_config`).
+
+---
+
+## 14. Revisión de dependencias (¿py-clob-client?)
+
+El proyecto **no** usa `py-clob-client` ni ninguna librería de trading no
+mantenida. Para datos **públicos de lectura** (Gamma + CLOB) basta con `httpx`,
+que es ligero, mantenido y sin estado de wallet. Decisión deliberada:
+
+- **`py-clob-client`** (SDK oficial) sigue mantenido, pero su valor está en la
+  parte **autenticada** (firma de órdenes EIP-712, claves API, allowances). Para
+  paper trading de solo lectura añadiría peso y superficie de riesgo (claves)
+  sin beneficio. Cuando llegue el momento de operar en real, es **la opción
+  recomendada** para la parte de ejecución firmada.
+- **Stack actual** (todas mantenidas y con versiones recientes): `httpx`,
+  `pandas`, `plotly`, `streamlit`, `python-dotenv`, `tabulate`, `pytest`. Dev:
+  `ruff`, `mypy`.
+
+> Conclusión: para la fase paper-only no hay dependencias antiguas/abandonadas.
+> El cliente está aislado en `polymarket_client.py`, así que migrar a
+> `py-clob-client` (o añadir WebSocket) en el futuro es un cambio localizado.
+
+## 15. Hoja de ruta hacia dinero real (objetivo: finales de julio)
+
+Este build es **paper-only por diseño** y así seguirá hasta validar la lógica.
+Antes de plantear capital real, deben cumplirse **todos** estos criterios:
+
+- [ ] **≥ 8 semanas** de paper trading continuo.
+- [ ] **Sin crashes** (el bucle `paper` aguanta y registra excepciones).
+- [ ] **Logs completos** de cada decisión (señal, motivo, riesgo, fill).
+- [ ] **Liquidación de mercados resueltos** funcionando (settle 0/1). ✅ implementado
+- [ ] **Slippage simulado** y costes conservadores. ✅ implementado
+- [ ] **Resultados positivos** tras supuestos conservadores.
+- [ ] **Drawdown controlado** (objetivo: máx. semanal dentro de los límites).
+- [ ] **Dashboard claro** y revisado semanalmente. ✅ implementado
+- [ ] **Tests en verde** + **CI/CD** en GitHub Actions. ✅ implementado
+
+Cuando se cumplan, el paso a real implicaría (fuera del alcance actual):
+integrar `py-clob-client` para firma de órdenes, gestión de claves/allowances,
+y un modo "real" con su propia barrera de confirmaciones. **Nada de esto está
+implementado todavía**, y `LIVE_TRADING=true` seguirá abortando el arranque.
 
 ---
 

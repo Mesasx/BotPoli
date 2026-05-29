@@ -1,0 +1,7 @@
+# Development & CI tooling (install with: pip install -r requirements-dev.txt)
+-r requirements.txt
+
+ruff>=0.6          # linting + formatting checks
+mypy>=1.10         # static type checking
+pandas-stubs       # type stubs for pandas (used by storage/dashboard)
+types-tabulate     # type stubs for tabulate

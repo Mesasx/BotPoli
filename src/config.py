@@ -63,8 +63,10 @@ class Config:
 
     # Sizing / risk limits (USDC)
     max_trade_size: float = 5.0
+    max_trade_pct: float = 0.02          # max fraction of equity per single trade
     max_position_size: float = 25.0
     max_daily_loss: float = 20.0
+    max_weekly_loss: float = 50.0        # weekly circuit breaker (halts new buys)
     max_open_positions: int = 5
     max_market_exposure: float = 25.0
     max_total_exposure: float = 100.0
@@ -80,6 +82,13 @@ class Config:
     take_profit_pct: float = 0.15
     stop_loss_pct: float = 0.10
 
+    # Trend-based exit (close on a strong adverse move in the mark price)
+    trend_window: int = 5                # nº of recent snapshots used to gauge trend
+    trend_exit_pct: float = 0.25         # adverse mid move that forces an exit (0 = off)
+
+    # Market resolution (settle 0/1) — always on; paper-only liquidation
+    settle_resolved: bool = True
+
     # Simulation realism
     slippage_bps: float = 10.0
     fee_bps: float = 0.0
@@ -93,9 +102,10 @@ class Config:
     gamma_api_url: str = "https://gamma-api.polymarket.com"
     clob_api_url: str = "https://clob.polymarket.com"
 
-    # Storage / logging
+    # Storage / logging / reports
     database_url: str = "sqlite:///data/polymarket_paper_bot.db"
     log_level: str = "INFO"
+    reports_dir: str = "data/reports"
 
     @property
     def db_path(self) -> Path:
@@ -104,6 +114,14 @@ class Config:
         prefix = "sqlite:///"
         raw = url[len(prefix):] if url.startswith(prefix) else url
         path = Path(raw)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        return path
+
+    @property
+    def reports_path(self) -> Path:
+        """Resolve ``reports_dir`` to an absolute directory path."""
+        path = Path(self.reports_dir)
         if not path.is_absolute():
             path = PROJECT_ROOT / path
         return path
@@ -135,8 +153,10 @@ def load_config(env_file: str | os.PathLike | None = None) -> Config:
         initial_balance=_get_float("INITIAL_PAPER_BALANCE_USDC", 1000.0),
         allow_no=_get_bool("ALLOW_NO", False),
         max_trade_size=_get_float("MAX_TRADE_SIZE_USDC", 5.0),
+        max_trade_pct=_get_float("MAX_TRADE_PCT", 0.02),
         max_position_size=_get_float("MAX_POSITION_SIZE_USDC", 25.0),
         max_daily_loss=_get_float("MAX_DAILY_LOSS_USDC", 20.0),
+        max_weekly_loss=_get_float("MAX_WEEKLY_LOSS_USDC", 50.0),
         max_open_positions=_get_int("MAX_OPEN_POSITIONS", 5),
         max_market_exposure=_get_float("MAX_MARKET_EXPOSURE_USDC", 25.0),
         max_total_exposure=_get_float("MAX_TOTAL_EXPOSURE_USDC", 100.0),
@@ -147,6 +167,9 @@ def load_config(env_file: str | os.PathLike | None = None) -> Config:
         entry_price_max=_get_float("ENTRY_PRICE_MAX", 0.45),
         take_profit_pct=_get_float("TAKE_PROFIT_PCT", 0.15),
         stop_loss_pct=_get_float("STOP_LOSS_PCT", 0.10),
+        trend_window=_get_int("TREND_WINDOW", 5),
+        trend_exit_pct=_get_float("TREND_EXIT_PCT", 0.25),
+        settle_resolved=_get_bool("SETTLE_RESOLVED", True),
         slippage_bps=_get_float("SLIPPAGE_BPS", 10.0),
         fee_bps=_get_float("FEE_BPS", 0.0),
         poll_interval_seconds=_get_int("POLL_INTERVAL_SECONDS", 30),
@@ -156,6 +179,7 @@ def load_config(env_file: str | os.PathLike | None = None) -> Config:
         clob_api_url=os.getenv("CLOB_API_URL", "https://clob.polymarket.com").rstrip("/"),
         database_url=os.getenv("DATABASE_URL", "sqlite:///data/polymarket_paper_bot.db"),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
     )
 
     if cfg.live_trading or not cfg.paper_trading:
