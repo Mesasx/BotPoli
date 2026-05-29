@@ -6,6 +6,8 @@ Commands:
     python -m src.main paper --once  # run a single cycle
     python -m src.main status        # print portfolio summary
     python -m src.main report        # generate the weekly report (--save to persist)
+    python -m src.main review        # 15-minute go/no-go review (--save to persist)
+    python -m src.main backtest      # backtest a strategy over recorded snapshots
     python -m src.main dashboard     # launch the Streamlit dashboard
     python -m src.main export        # export all tables to CSV
     python -m src.main reset-paper   # wipe paper-trading state
@@ -18,13 +20,19 @@ import argparse
 import sys
 import time
 
+from .backtest import Backtester
 from .config import Config, load_config
 from .logger import get_logger, setup_logging
 from .market_scanner import MarketScanner
 from .models import BUY, HOLD, SELL, EquitySnapshot, MarketSnapshot, Order, utcnow
 from .paper_executor import PaperExecutor
 from .polymarket_client import PolymarketClient
-from .report import generate_weekly_report, save_report
+from .report import (
+    generate_review,
+    generate_weekly_report,
+    save_report,
+    save_review,
+)
 from .resolution import MarketResolver
 from .risk_manager import RiskManager
 from .storage import Storage
@@ -324,6 +332,33 @@ def cmd_report(cfg: Config, save: bool) -> None:
         storage.close()
 
 
+def cmd_review(cfg: Config, save: bool) -> None:
+    storage = Storage(cfg)
+    try:
+        digest = generate_review(storage, cfg)
+        print(digest.to_markdown())
+        if save:
+            path = save_review(digest, cfg)
+            print(f"\nRevisión guardada en: {path}")
+    finally:
+        storage.close()
+
+
+def cmd_backtest(cfg: Config, gap_seconds: float, strategy_name: str) -> None:
+    storage = Storage(cfg)
+    try:
+        history = storage.load_snapshot_history()
+        if not history:
+            print("No hay snapshots históricos. Ejecuta `python -m src.main paper` "
+                  "durante un tiempo para acumular datos antes de hacer backtest.")
+            return
+        backtester = Backtester(cfg, build_strategy(strategy_name, cfg))
+        result = backtester.run(history, gap_seconds=gap_seconds)
+        print(result.to_text())
+    finally:
+        storage.close()
+
+
 def cmd_dashboard(cfg: Config) -> None:
     import subprocess
     from pathlib import Path
@@ -382,6 +417,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_report = sub.add_parser("report", help="Generate the weekly paper-trading report")
     p_report.add_argument("--save", action="store_true", help="Also save the report to data/reports/")
 
+    p_review = sub.add_parser("review", help="15-minute go/no-go review against the roadmap criteria")
+    p_review.add_argument("--save", action="store_true", help="Also save the review to data/reports/")
+
+    p_bt = sub.add_parser("backtest", help="Backtest a strategy over recorded snapshots (offline)")
+    p_bt.add_argument("--strategy", default="simple_threshold", help="Strategy name")
+    p_bt.add_argument("--gap-seconds", type=float, default=5.0,
+                      help="Max timestamp gap (s) for grouping snapshots into a cycle")
+
     sub.add_parser("dashboard", help="Launch the Streamlit dashboard")
     sub.add_parser("export", help="Export all tables to CSV")
 
@@ -408,6 +451,10 @@ def main(argv: list[str] | None = None) -> int:
         cmd_status(cfg)
     elif args.command == "report":
         cmd_report(cfg, save=args.save)
+    elif args.command == "review":
+        cmd_review(cfg, save=args.save)
+    elif args.command == "backtest":
+        cmd_backtest(cfg, gap_seconds=args.gap_seconds, strategy_name=args.strategy)
     elif args.command == "dashboard":
         cmd_dashboard(cfg)
     elif args.command == "export":

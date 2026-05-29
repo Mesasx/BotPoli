@@ -1,0 +1,63 @@
+name: Paper bot (data accumulation)
+
+# Runs the PAPER trading bot on a schedule to accumulate real recorded data
+# over the multi-week evaluation. The SQLite DB is persisted between runs via
+# actions/cache (rolling key), so history grows across scheduled runs.
+#
+# PAPER ONLY: this calls public read-only Polymarket endpoints and simulates
+# fills. It never trades for real (LIVE_TRADING=true aborts the bot).
+#
+# NOTE: scheduled workflows only run from the repository's default branch.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"      # every 6 hours (best-effort)
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Number of paper cycles to run"
+        default: "20"
+
+concurrency:
+  group: paper-bot-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Keep the workload modest to respect public API rate limits.
+      SCAN_LIMIT: "40"
+      POLL_INTERVAL_SECONDS: "10"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore paper-trading DB
+        uses: actions/cache@v4
+        with:
+          path: data/polymarket_paper_bot.db
+          key: polybot-db-${{ github.run_id }}
+          restore-keys: |
+            polybot-db-
+
+      - name: Run paper cycles
+        run: python -m src.main paper --iterations "${{ github.event.inputs.iterations || '20' }}"
+
+      - name: Upload DB snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-db-${{ github.run_id }}
+          path: data/polymarket_paper_bot.db
+          retention-days: 14
+          if-no-files-found: ignore

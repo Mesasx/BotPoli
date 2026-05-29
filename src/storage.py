@@ -205,6 +205,27 @@ class Storage:
         portfolio.mark_to_market({k: v for k, v in marks.items() if v})
         return portfolio
 
+    def load_snapshot_history(self) -> list[MarketSnapshot]:
+        """All stored market snapshots as :class:`MarketSnapshot`, oldest first.
+
+        Used by the backtester to replay recorded prices offline (no network).
+        """
+        cur = self.conn.execute("SELECT * FROM market_snapshots ORDER BY id ASC")
+        history: list[MarketSnapshot] = []
+        for r in cur.fetchall():
+            history.append(
+                MarketSnapshot(
+                    market_id=r["market_id"], slug=r["slug"], question=r["question"] or "",
+                    category=r["category"] or "", outcome=r["outcome"], token_id=r["token_id"],
+                    best_bid=r["best_bid"] or 0.0, best_ask=r["best_ask"] or 0.0,
+                    midpoint=r["midpoint"] or 0.0, spread=r["spread"] or 0.0,
+                    volume=r["volume"] or 0.0, liquidity=r["liquidity"] or 0.0,
+                    end_date=_parse_dt(r["end_date"]), hours_to_close=r["hours_to_close"],
+                    timestamp=_parse_dt(r["ts"]) or datetime.now(UTC),
+                )
+            )
+        return history
+
     def peak_equity(self) -> float:
         cur = self.conn.execute("SELECT MAX(equity) AS m FROM equity_snapshots")
         row = cur.fetchone()

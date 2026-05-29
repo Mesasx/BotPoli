@@ -95,3 +95,20 @@ def test_weekly_report_empty_db_is_safe(config):
         assert "sin actividad" in report.explanation.lower()
     finally:
         storage.close()
+
+
+# -- 15-minute review -------------------------------------------------------
+def test_review_digest_flags_insufficient_weeks(config):
+    from src.report import generate_review
+    storage = Storage(config)
+    try:
+        digest = generate_review(storage, config)
+        assert not digest.ready  # no data -> < 8 weeks -> not ready
+        names = {c.name: c.status for c in digest.criteria}
+        assert names["≥ 8 semanas de paper"] == "fail"
+        assert names["Liquidación settle 0/1"] == "pass"
+        md = digest.to_markdown()
+        assert "Revisión de 15 minutos" in md
+        assert "Veredicto" in md
+    finally:
+        storage.close()
