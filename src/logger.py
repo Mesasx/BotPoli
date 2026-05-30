@@ -7,6 +7,7 @@ once at process start, then use :func:`get_logger` everywhere else.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from logging.handlers import RotatingFileHandler
 
 from .config import PROJECT_ROOT
@@ -14,6 +15,35 @@ from .config import PROJECT_ROOT
 _LOG_DIR = PROJECT_ROOT / "logs"
 _FMT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
 _configured = False
+
+
+class RingBufferHandler(logging.Handler):
+    """Keeps the most recent log lines in memory for the live web console."""
+
+    def __init__(self, capacity: int = 500):
+        super().__init__()
+        self.buffer: deque[dict] = deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.buffer.append({
+                "ts": record.created,
+                "level": record.levelname,
+                "name": record.name,
+                "message": record.getMessage(),
+            })
+        except Exception:  # pragma: no cover - logging must never raise
+            pass
+
+
+# Single shared ring buffer; attached when logging is configured.
+_ring = RingBufferHandler()
+
+
+def get_recent_logs(limit: int = 200) -> list[dict]:
+    """Return up to ``limit`` most recent log entries (oldest first)."""
+    items = list(_ring.buffer)
+    return items[-limit:]
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -37,6 +67,9 @@ def setup_logging(level: str = "INFO") -> None:
     )
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
+
+    _ring.setFormatter(formatter)
+    root.addHandler(_ring)
 
     root.propagate = False
     _configured = True
