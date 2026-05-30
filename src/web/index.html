@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polymarket Paper Bot — Supervisión</title>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #131a26; --panel2: #1b2433; --line: #243044;
+    --text: #e6edf6; --muted: #8a98ad; --green: #2ec27e; --red: #ff5d6c;
+    --amber: #ffb23e; --blue: #4c8dff; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .paper-badge { font-size: 11px; color: var(--amber); border: 1px solid var(--amber);
+    border-radius: 999px; padding: 2px 8px; }
+  .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px;
+    border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .s-running { color: var(--green); background: rgba(46,194,126,.12); }
+  .s-paused  { color: var(--amber); background: rgba(255,178,62,.12); }
+  .s-halted  { color: var(--red);   background: rgba(255,93,108,.12); }
+  .s-stopped { color: var(--muted); background: rgba(138,152,173,.12); }
+  .conn { font-size: 12px; color: var(--muted); }
+  .conn.bad { color: var(--red); }
+  main { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px 20px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 760px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .kpi .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .kpi .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.slug { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--panel2); color: var(--muted); }
+  .stack > * + * { margin-top: 16px; }
+  canvas { width: 100%; height: 220px; display: block; }
+  .controls label { display: block; font-size: 11px; color: var(--muted); margin: 8px 0 3px; }
+  .controls input { width: 100%; background: var(--panel2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); border-radius: 8px; padding: 8px 12px; font: inherit; font-weight: 600; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.warn { color: var(--amber); } button.danger { color: var(--red); }
+  .alerts .alert { border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+  .alert.danger { background: rgba(255,93,108,.12); border: 1px solid rgba(255,93,108,.4); }
+  .alert.warning { background: rgba(255,178,62,.12); border: 1px solid rgba(255,178,62,.4); }
+  .alert.ok { color: var(--muted); }
+  .logs { background: #07101e; border: 1px solid var(--line); border-radius: 8px; height: 200px;
+    overflow-y: auto; padding: 8px; font: 11.5px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  .logs .lg { color: var(--muted); } .logs .WARNING { color: var(--amber); } .logs .ERROR { color: var(--red); }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📈 Polymarket Paper Bot</h1>
+  <span class="paper-badge">PAPER · sin dinero real</span>
+  <span class="spacer"></span>
+  <span id="status" class="pill s-stopped"><span class="dot"></span><span id="status-text">—</span></span>
+  <span id="conn" class="conn">conectando…</span>
+  <span id="updated" class="conn"></span>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<main>
+  <div class="stack">
+    <div class="panel">
+      <h2>Evolución del saldo ficticio</h2>
+      <canvas id="equity"></canvas>
+      <div class="small muted" id="equity-empty" style="display:none">
+        Sin datos de equity todavía. El bot empezará a registrar al primer ciclo.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Posiciones abiertas</h2>
+      <table>
+        <thead><tr><th>Mercado</th><th>Out</th><th>Entrada</th><th>Actual</th>
+          <th>P/L</th><th>%</th><th>Abierta</th><th></th></tr></thead>
+        <tbody id="positions"></tbody>
+      </table>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>Operaciones cerradas</h2>
+        <table>
+          <thead><tr><th>Mercado</th><th>Out</th><th>Salida</th><th>P/L</th></tr></thead>
+          <tbody id="closed"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Mejores / peores</h2>
+        <table>
+          <thead><tr><th>Mercado</th><th>Out</th><th>P/L</th></tr></thead>
+          <tbody id="bestworst"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Mercados seguidos</h2>
+      <table>
+        <thead><tr><th>Mercado</th><th>Out</th><th>Mid</th><th>Spread</th><th>Liquidez</th><th>Señal</th></tr></thead>
+        <tbody id="markets"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <h2>Estado del dinero ficticio</h2>
+      <div id="money" class="small"></div>
+    </div>
+
+    <div class="panel alerts">
+      <h2>Alertas de riesgo</h2>
+      <div id="alerts"></div>
+    </div>
+
+    <div class="panel controls">
+      <h2>Control del bot</h2>
+      <div class="btnrow">
+        <button class="primary" onclick="ctl('resume')">▶ Reanudar</button>
+        <button class="warn" onclick="ctl('pause')">⏸ Pausar</button>
+        <button class="danger" onclick="resetAccount()">⟲ Reset cuenta</button>
+      </div>
+      <label>Cerrar posición (slug o token)</label>
+      <input id="closeMatch" placeholder="p.ej. will-x-happen" />
+      <div class="btnrow"><button onclick="closePos()">Cerrar posición</button></div>
+    </div>
+
+    <div class="panel controls">
+      <h2>Configuración (paper)</h2>
+      <div id="config-fields"></div>
+      <div class="btnrow"><button class="primary" onclick="saveConfig()">💾 Guardar configuración</button></div>
+      <div class="small muted" id="config-note" style="margin-top:8px">
+        Cambiar el saldo inicial requiere resetear la cuenta para que tenga efecto pleno.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Logs en vivo</h2>
+      <div id="logs" class="logs"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const money = (x) => (x < 0 ? "-$" : "$") + Math.abs(x).toLocaleString("es-ES", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const pn = (x) => x >= 0 ? "pos" : "neg";
+let lastState = null, fieldDefs = [];
+
+async function loadConfigFields() {
+  const r = await fetch("/api/config"); const data = await r.json();
+  fieldDefs = data.fields;
+  const wrap = $("config-fields"); wrap.innerHTML = "";
+  for (const f of data.fields) {
+    const v = data.values[f.name];
+    wrap.insertAdjacentHTML("beforeend",
+      `<label>${f.label}</label><input id="cfg_${f.name}" value="${v}" />`);
+  }
+}
+
+async function ctl(action) {
+  await fetch(`/api/control/${action}`, {method: "POST"});
+}
+async function resetAccount() {
+  if (confirm("¿Resetear la cuenta paper? Se borra el estado de trading simulado.")) await ctl("reset");
+}
+async function closePos() {
+  const match = $("closeMatch").value.trim(); if (!match) return;
+  await fetch("/api/control/close", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({match})});
+  $("closeMatch").value = "";
+}
+async function saveConfig() {
+  const values = {};
+  for (const f of fieldDefs) {
+    const el = $(`cfg_${f.name}`); if (!el) continue;
+    values[f.name] = f.type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
+  }
+  await fetch("/api/config", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({values})});
+}
+
+function statusPill(s) {
+  const map = {running: ["s-running", "Funcionando"], paused: ["s-paused", "Pausado"],
+    halted: ["s-halted", "Bloqueado (stop semanal)"], stopped: ["s-stopped", "Detenido"]};
+  const [cls, txt] = map[s] || map.stopped;
+  $("status").className = "pill " + cls; $("status-text").textContent = txt;
+}
+
+function renderKpis(k) {
+  const card = (label, value, sub, cls) =>
+    `<div class="kpi"><div class="label">${label}</div>
+     <div class="value ${cls||""}">${value}</div><div class="sub">${sub||""}</div></div>`;
+  $("kpis").innerHTML =
+    card("Saldo inicial", money(k.initial_balance)) +
+    card("Saldo actual", money(k.equity), `Drawdown ${k.drawdown}%`) +
+    card("Disponible", money(k.available), "cash ficticio") +
+    card("Invertido", money(k.invested), `${k.open_positions} posiciones`) +
+    card("P/L total", money(k.total_pnl), `Win rate ${k.win_rate}%`, pn(k.total_pnl)) +
+    card("P/L semanal", money(k.weekly_pnl), "esta semana ISO", pn(k.weekly_pnl)) +
+    card("P/L diario", money(k.daily_pnl), "hoy", pn(k.daily_pnl)) +
+    card("Operaciones", k.closed_trades, "cerradas");
+  $("money").innerHTML =
+    `<div>💵 Disponible (cash): <b>${money(k.available)}</b></div>
+     <div>📊 Invertido (posiciones): <b>${money(k.invested)}</b></div>
+     <div>🏦 Equity total: <b>${money(k.equity)}</b></div>
+     <div class="muted small">Inicial ${money(k.initial_balance)} · P/L ${money(k.total_pnl)}</div>`;
+}
+
+function timeOpen(iso) {
+  if (!iso) return "—";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function renderTables(st) {
+  $("positions").innerHTML = st.positions.length ? st.positions.map(p =>
+    `<tr><td class="slug">${p.slug}</td><td>${p.outcome}</td><td>${p.entry_price}</td>
+     <td>${p.current_price}</td><td class="${pn(p.pnl)}">${money(p.pnl)}</td>
+     <td class="${pn(p.return_pct)}">${p.return_pct}%</td><td>${timeOpen(p.opened_at)}</td>
+     <td><button onclick="quickClose('${p.token_id}')">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="8" class="muted">Sin posiciones abiertas.</td></tr>`;
+
+  $("closed").innerHTML = st.closed.length ? st.closed.map(t =>
+    `<tr><td class="slug">${t.slug}</td><td>${t.outcome}</td><td>${t.exit_price}</td>
+     <td class="${pn(t.pnl)}">${money(t.pnl)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="muted">Aún no hay operaciones cerradas.</td></tr>`;
+
+  const bw = [...st.best.map(t => ["🟢", t]), ...st.worst.map(t => ["🔴", t])];
+  $("bestworst").innerHTML = bw.length ? bw.map(([ic, t]) =>
+    `<tr><td class="slug">${ic} ${t.slug}</td><td>${t.outcome}</td>
+     <td class="${pn(t.pnl)}">${money(t.pnl)}</td></tr>`).join("")
+    : `<tr><td colspan="3" class="muted">—</td></tr>`;
+
+  $("markets").innerHTML = st.markets.length ? st.markets.map(m =>
+    `<tr><td class="slug">${m.slug}</td><td>${m.outcome}</td><td>${m.midpoint}</td>
+     <td>${m.spread}</td><td>${m.liquidity}</td><td><span class="tag">${m.signal||"-"}</span></td></tr>`).join("")
+    : `<tr><td colspan="6" class="muted">Sin mercados escaneados todavía.</td></tr>`;
+}
+
+async function quickClose(token) {
+  await fetch("/api/control/close", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({match: token})});
+}
+
+function renderAlerts(st) {
+  const a = st.alerts || [];
+  $("alerts").innerHTML = a.length ? a.map(x =>
+    `<div class="alert ${x.level}">${x.text}</div>`).join("")
+    : `<div class="alert ok">Sin alertas. Todo dentro de los límites.</div>`;
+}
+
+function renderLogs(logs) {
+  const box = $("logs");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = (logs || []).map(l => {
+    const t = new Date(l.ts * 1000).toLocaleTimeString("es-ES");
+    return `<div class="lg ${l.level}">${t} ${l.level} ${l.name.replace("polybot.","")} — ${escapeHtml(l.message)}</div>`;
+  }).join("");
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function drawEquity(curve) {
+  const cv = $("equity"), empty = $("equity-empty");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = 220;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  if (!curve || curve.length < 2) { empty.style.display = "block"; return; }
+  empty.style.display = "none";
+  const ys = curve.map(p => p.equity);
+  let lo = Math.min(...ys), hi = Math.max(...ys); if (hi === lo) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const x = (i) => (i / (curve.length - 1)) * (w - 8) + 4;
+  const y = (v) => h - 8 - ((v - lo) / (hi - lo)) * (h - 16);
+  // baseline (initial balance) if in range
+  const base = lastState?.kpis?.initial_balance;
+  if (base != null && base >= lo && base <= hi) {
+    ctx.strokeStyle = "#3a4760"; ctx.setLineDash([4, 4]); ctx.beginPath();
+    ctx.moveTo(4, y(base)); ctx.lineTo(w - 4, y(base)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const up = ys[ys.length - 1] >= (base ?? ys[0]);
+  ctx.strokeStyle = up ? "#2ec27e" : "#ff5d6c"; ctx.lineWidth = 2; ctx.beginPath();
+  curve.forEach((p, i) => i ? ctx.lineTo(x(i), y(p.equity)) : ctx.moveTo(x(i), y(p.equity)));
+  ctx.stroke();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, up ? "rgba(46,194,126,.25)" : "rgba(255,93,108,.25)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.lineTo(x(curve.length - 1), h); ctx.lineTo(x(0), h); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+}
+
+function render(st) {
+  lastState = st;
+  statusPill(st.status);
+  if (st.last_ok) $("updated").textContent = "Última actualización: " + new Date(st.last_ok).toLocaleTimeString("es-ES");
+  renderKpis(st.kpis); renderTables(st); renderAlerts(st); renderLogs(st.logs);
+  drawEquity(st.equity_curve);
+}
+
+// Live time-open tick (no server round-trip).
+setInterval(() => { if (lastState) renderTables(lastState); }, 1000);
+
+let ws;
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => { $("conn").textContent = "● en directo"; $("conn").className = "conn"; };
+  ws.onmessage = (e) => render(JSON.parse(e.data));
+  ws.onclose = () => { $("conn").textContent = "● desconectado — reintentando"; $("conn").className = "conn bad"; setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+loadConfigFields().then(connect);
+window.addEventListener("resize", () => lastState && drawEquity(lastState.equity_curve));
+</script>
+</body>
+</html>

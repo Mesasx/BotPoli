@@ -167,13 +167,49 @@ python -m src.main review          # revisión de 15 min (go/no-go hacia real)
 python -m src.main review --save   # revisión + guarda .md en data/reports/
 python -m src.main backtest        # backtest de la estrategia sobre snapshots guardados
 python -m src.main backtest --strategy simple_threshold --gap-seconds 5
-python -m src.main dashboard       # lanza el dashboard de Streamlit
+python -m src.main serve           # plataforma de supervisión en vivo (web + control)
+python -m src.main serve --port 8000 --no-browser
+python -m src.main dashboard       # lanza el dashboard de Streamlit (vista de análisis)
 python -m src.main export          # exporta todas las tablas a CSV (data/exports/)
 python -m src.main reset-paper     # borra el estado de paper trading
 python -m src.main close <slug>    # cierra manualmente posiciones que coincidan
 ```
 
-## 6. Dashboard
+## 6. Plataforma de supervisión en vivo (web)
+
+Una **plataforma local tipo panel de trading** que mantiene el bot funcionando de
+forma **continua** y se actualiza casi en directo. Un solo comando:
+
+```bash
+python -m src.main serve            # arranca el servidor y abre el navegador
+# http://127.0.0.1:8000
+```
+
+Qué incluye:
+- **Bot siempre encendido**: el motor corre en un hilo de fondo dentro del
+  servidor (FastAPI). La pantalla recibe el estado por **WebSocket** cada ~2 s.
+- **En tiempo real**: saldo inicial/actual/disponible/invertido, P/L total/semanal/
+  diario, evolución del saldo (gráfico), mercados seguidos, posiciones abiertas
+  (entrada, precio actual, P/L, tiempo abierta), operaciones cerradas,
+  mejores/peores, alertas de riesgo, estado (🟢 funcionando / ⏸️ pausado /
+  ⛔ bloqueado por stop semanal) y última actualización.
+- **Control sin tocar código**: editar saldo inicial, máximo por operación,
+  riesgo máximo y nº de posiciones; **pausar**/**reanudar**; **cerrar** una
+  posición; **resetear** la cuenta; **guardar** configuración.
+- **Logs en vivo** y **avisos** si el bot deja de recibir datos o algo falla.
+
+Dos ritmos desacoplados (clave para no saturar las APIs): la **pantalla** se
+refresca rápido leyendo el estado en memoria; el **bot** consulta Polymarket a un
+intervalo prudente y configurable (`POLL_INTERVAL_SECONDS`).
+
+**Seguridad**: escucha **solo en `127.0.0.1`** (tu máquina). La configuración
+editable está en `data/runtime_config.json` (solo parámetros paper; `live_trading`
+**no** es editable). Sigue siendo 100% paper: sin wallet, claves, firma ni
+endpoints de escritura.
+
+## 6-bis. Dashboard de análisis (Streamlit)
+
+Vista complementaria para informes y gráficos históricos:
 
 ```bash
 streamlit run src/dashboard.py
@@ -261,7 +297,7 @@ dashboard) genera un resumen pensado para revisar el bot en ~15 min/semana:
 ## 8. Tests
 
 ```bash
-pytest                       # 65 tests
+pytest                       # 80 tests
 # o el set completo de CI (lint + tipos + tests):
 pip install -r requirements-dev.txt
 ruff check src tests && mypy src && pytest -q
@@ -272,9 +308,11 @@ manager (topes, cortacircuitos diario y **semanal**, tope por % del equity),
 paper executor (slippage/fees/rechazos), portfolio (PnL, equity, coste medio,
 exposición, win rate), storage (persistencia, replay, PnL diario/semanal,
 reset/export), **resolución 0/1**, **informe semanal**, **revisión de 15 min**,
-**backtesting** (agrupado en ciclos + métricas), parsing de mercados Gamma y
-tests **end-to-end** del ciclo completo (abrir posición, salir por take profit
-y **liquidar un mercado resuelto**).
+**backtesting** (agrupado en ciclos + métricas), **config editable en caliente**,
+**runner de fondo** (pausar/reanudar/reset/cerrar sin crashear) y la **API web**
+(estado, control y WebSocket vía `TestClient`), parsing de mercados Gamma y tests
+**end-to-end** del ciclo completo (abrir posición, salir por take profit y
+**liquidar un mercado resuelto**).
 
 ### CI/CD (GitHub Actions)
 

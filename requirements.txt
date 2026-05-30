@@ -10,6 +10,10 @@ plotly>=5.20
 # Local dashboard
 streamlit>=1.33
 
+# Live supervision platform (FastAPI + WebSocket server)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
 # .env loading
 python-dotenv>=1.0
 

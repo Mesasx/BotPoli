@@ -8,6 +8,7 @@ Commands:
     python -m src.main report        # generate the weekly report (--save to persist)
     python -m src.main review        # 15-minute go/no-go review (--save to persist)
     python -m src.main backtest      # backtest a strategy over recorded snapshots
+    python -m src.main serve         # live supervision platform (web UI + control)
     python -m src.main dashboard     # launch the Streamlit dashboard
     python -m src.main export        # export all tables to CSV
     python -m src.main reset-paper   # wipe paper-trading state
@@ -359,6 +360,28 @@ def cmd_backtest(cfg: Config, gap_seconds: float, strategy_name: str) -> None:
         storage.close()
 
 
+def cmd_serve(cfg: Config, host: str, port: int, no_browser: bool) -> None:
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from .bot_runner import BotRunner
+    from .webapp import create_app
+
+    runner = BotRunner(cfg)
+    runner.start()
+    app = create_app(runner)
+    url = f"http://{host}:{port}"
+    print(f"\n  📈 Plataforma de supervisión (PAPER): {url}\n")
+    if not no_browser:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+    finally:
+        runner.shutdown()
+
+
 def cmd_dashboard(cfg: Config) -> None:
     import subprocess
     from pathlib import Path
@@ -425,6 +448,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--gap-seconds", type=float, default=5.0,
                       help="Max timestamp gap (s) for grouping snapshots into a cycle")
 
+    p_serve = sub.add_parser("serve", help="Launch the live supervision platform (FastAPI + web UI)")
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: localhost only)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Bind port")
+    p_serve.add_argument("--no-browser", action="store_true", help="Do not open the browser")
+
     sub.add_parser("dashboard", help="Launch the Streamlit dashboard")
     sub.add_parser("export", help="Export all tables to CSV")
 
@@ -455,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
         cmd_review(cfg, save=args.save)
     elif args.command == "backtest":
         cmd_backtest(cfg, gap_seconds=args.gap_seconds, strategy_name=args.strategy)
+    elif args.command == "serve":
+        cmd_serve(cfg, host=args.host, port=args.port, no_browser=args.no_browser)
     elif args.command == "dashboard":
         cmd_dashboard(cfg)
     elif args.command == "export":
