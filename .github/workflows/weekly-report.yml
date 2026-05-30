@@ -1,0 +1,64 @@
+name: Weekly report & review
+
+# Every Monday, generates the weekly paper-trading report and the 15-minute
+# go/no-go review from the accumulated DB (shared cache with paper-bot.yml),
+# and uploads them as downloadable artifacts. PAPER ONLY.
+#
+# NOTE: scheduled workflows only run from the repository's default branch.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"        # Mondays 08:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: weekly-report
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore paper-trading DB
+        uses: actions/cache@v4
+        with:
+          path: data/polymarket_paper_bot.db
+          key: polybot-db-report-${{ github.run_id }}
+          restore-keys: |
+            polybot-db-
+
+      - name: Generate weekly report
+        run: python -m src.main report --save
+
+      - name: Generate 15-minute review
+        run: python -m src.main review --save
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-reports-${{ github.run_id }}
+          path: data/reports/*.md
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Show review in the run summary
+        if: always()
+        run: |
+          {
+            echo '## Revisión de 15 minutos'
+            echo ''
+            cat data/reports/review_*.md 2>/dev/null || echo 'Sin datos suficientes todavía.'
+          } >> "$GITHUB_STEP_SUMMARY"

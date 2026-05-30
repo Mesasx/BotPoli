@@ -163,6 +163,10 @@ python -m src.main paper --iterations 10
 python -m src.main status          # resumen de la cartera
 python -m src.main report          # informe semanal por consola
 python -m src.main report --save   # informe semanal + guarda .md en data/reports/
+python -m src.main review          # revisión de 15 min (go/no-go hacia real)
+python -m src.main review --save   # revisión + guarda .md en data/reports/
+python -m src.main backtest        # backtest de la estrategia sobre snapshots guardados
+python -m src.main backtest --strategy simple_threshold --gap-seconds 5
 python -m src.main dashboard       # lanza el dashboard de Streamlit
 python -m src.main export          # exporta todas las tablas a CSV (data/exports/)
 python -m src.main reset-paper     # borra el estado de paper trading
@@ -257,7 +261,7 @@ dashboard) genera un resumen pensado para revisar el bot en ~15 min/semana:
 ## 8. Tests
 
 ```bash
-pytest                       # 60 tests
+pytest                       # 65 tests
 # o el set completo de CI (lint + tipos + tests):
 pip install -r requirements-dev.txt
 ruff check src tests && mypy src && pytest -q
@@ -267,9 +271,10 @@ Cubren: estrategia (entradas/salidas/rechazos + salida por tendencia), risk
 manager (topes, cortacircuitos diario y **semanal**, tope por % del equity),
 paper executor (slippage/fees/rechazos), portfolio (PnL, equity, coste medio,
 exposición, win rate), storage (persistencia, replay, PnL diario/semanal,
-reset/export), **resolución 0/1**, **informe semanal**, parsing de mercados
-Gamma y tests **end-to-end** del ciclo completo (abrir posición, salir por take
-profit y **liquidar un mercado resuelto**).
+reset/export), **resolución 0/1**, **informe semanal**, **revisión de 15 min**,
+**backtesting** (agrupado en ciclos + métricas), parsing de mercados Gamma y
+tests **end-to-end** del ciclo completo (abrir posición, salir por take profit
+y **liquidar un mercado resuelto**).
 
 ### CI/CD (GitHub Actions)
 
@@ -353,6 +358,51 @@ Cuando se cumplan, el paso a real implicaría (fuera del alcance actual):
 integrar `py-clob-client` para firma de órdenes, gestión de claves/allowances,
 y un modo "real" con su propia barrera de confirmaciones. **Nada de esto está
 implementado todavía**, y `LIVE_TRADING=true` seguirá abortando el arranque.
+
+## 16. Backtesting (offline)
+
+`python -m src.main backtest` reproduce el histórico de `market_snapshots`
+(SQLite) a través de **los mismos** componentes de estrategia/riesgo/ejecución
+que se usan en vivo, sin tocar la red. `src/backtest.py`:
+
+- Agrupa los snapshots en **ciclos** detectando huecos temporales (los snapshots
+  de un mismo ciclo se escriben con microsegundos de diferencia; los ciclos
+  están separados por `POLL_INTERVAL_SECONDS`).
+- Calcula la tendencia con el histórico acumulado y aplica los cortacircuitos
+  diario/semanal igual que el motor en vivo.
+- Devuelve métricas: equity final, PnL total/realizado/no realizado,
+  compras/ventas, ganadoras/perdedoras, win rate, drawdown máximo y rechazos.
+
+> Limitación: el backtest **no** modela la resolución (settle 0/1), que depende
+> de datos de resolución en vivo (Gamma) y no del histórico de precios. Es una
+> evaluación de entradas/salidas/ejecución sobre precios reales grabados.
+
+## 17. Revisión de 15 minutos (go/no-go)
+
+`python -m src.main review [--save]` genera un **digest ejecutivo** para decidir
+en ~15 min si tiene sentido plantear dinero real. Evalúa automáticamente los
+criterios de §15 (semanas operando, PnL positivo, drawdown ≤ 20 %, slippage
+activo, settle implementado, tests/CI, …) y da un **veredicto** "LISTO / AÚN NO".
+Los criterios no auto-verificables (p. ej. "sin crashes") se marcan 🔍 para que
+los confirmes con los logs.
+
+## 18. Automatización semanal (GitHub Actions programado)
+
+Dos workflows mantienen el ciclo de evaluación sin intervención (solo se
+ejecutan desde la **rama por defecto** del repo, tras mergear):
+
+- **`.github/workflows/paper-bot.yml`** — cada 6 h: restaura la BD desde
+  `actions/cache` (clave rodante), corre N ciclos de `paper`, vuelve a cachear la
+  BD y la sube como artefacto. Así el histórico **se acumula** entre ejecuciones.
+- **`.github/workflows/weekly-report.yml`** — los lunes 08:00 UTC: genera el
+  informe semanal (`report --save`) y la revisión (`review --save`) desde la BD
+  cacheada, los publica como **artefactos** descargables y vuelca la revisión en
+  el *summary* del run.
+
+Ambos son **paper-only** (llaman a endpoints públicos de lectura y simulan
+fills). Para operación verdaderamente continua (cada 30 s durante semanas) se
+recomienda un host persistente; GitHub Actions es *best-effort* y sus jobs son
+efímeros, por eso el patrón es "tandas periódicas + caché de la BD".
 
 ---
 

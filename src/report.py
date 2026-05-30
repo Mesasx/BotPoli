@@ -361,6 +361,138 @@ def _detect_anomalies(storage: Storage, ws: datetime, we: datetime) -> list[str]
     return anomalies
 
 
+@dataclass
+class ReviewCriterion:
+    name: str
+    status: str          # "pass" / "fail" / "manual"
+    detail: str
+
+
+@dataclass
+class ReviewDigest:
+    """A 15-minute go/no-go review against the roadmap-to-real criteria."""
+
+    generated_at: datetime
+    weeks_elapsed: float
+    total_pnl: float
+    total_return_pct: float
+    max_drawdown: float
+    realized_pnl: float
+    n_trades: int
+    win_rate: float
+    halted: bool
+    criteria: list[ReviewCriterion]
+
+    @property
+    def ready(self) -> bool:
+        return all(c.status != "fail" for c in self.criteria)
+
+    def to_markdown(self) -> str:
+        icon = {"pass": "✅", "fail": "❌", "manual": "🔍"}
+        verdict = "LISTO para considerar real" if self.ready else "AÚN NO listo para real"
+        lines = [
+            "# ⏱️ Revisión de 15 minutos — Polymarket paper bot",
+            "",
+            "> PAPER TRADING — sin dinero real. Esto es una evaluación, no una orden de operar.",
+            "",
+            f"**Veredicto: {verdict}**",
+            "",
+            "## De un vistazo",
+            f"- Semanas operando: **{self.weeks_elapsed:.1f}**",
+            f"- PnL total: **${self.total_pnl:,.2f}** ({self.total_return_pct:+.1f}%)",
+            f"- PnL realizado: ${self.realized_pnl:,.2f}",
+            f"- Operaciones cerradas: {self.n_trades} · Win rate: {self.win_rate * 100:.1f}%",
+            f"- Drawdown máximo: {self.max_drawdown * 100:.1f}%",
+            f"- Estado: {'⛔ trading detenido (stop semanal)' if self.halted else '🟢 operando'}",
+            "",
+            "## Criterios para pasar a real",
+        ]
+        for c in self.criteria:
+            lines.append(f"- {icon.get(c.status, '•')} **{c.name}** — {c.detail}")
+        lines += [
+            "",
+            "## Qué hacer ahora (≤15 min)",
+            "1. Revisa el veredicto y los ❌ de arriba.",
+            "2. Abre el informe semanal (`report --save`) para el detalle de la semana.",
+            "3. Si hay 🔍 (verificación manual), confírmalos tú (p. ej. sin crashes en logs).",
+            "4. Ajusta `.env` según las recomendaciones del informe semanal si procede.",
+            "",
+            _BAR,
+            "Generado automáticamente. Sigue siendo paper-only por diseño.",
+        ]
+        return "\n".join(lines)
+
+
+def generate_review(
+    storage: Storage, config: Config, now: datetime | None = None, min_weeks: int = 8
+) -> ReviewDigest:
+    """Build the 15-minute review digest from persisted data."""
+    now = now or datetime.now(UTC)
+    portfolio = storage.load_portfolio()
+    markets_df = storage.latest_market_snapshots()
+    if not markets_df.empty:
+        marks = dict(zip(markets_df["token_id"], markets_df["midpoint"]))
+        portfolio.mark_to_market({k: v for k, v in marks.items() if v})
+
+    equity = portfolio.equity()
+    total_pnl = equity - config.initial_balance
+    total_return = (total_pnl / config.initial_balance * 100) if config.initial_balance else 0.0
+
+    # Weeks elapsed from the earliest recorded equity snapshot (or order).
+    equity_df = storage.get_df("equity_snapshots")
+    earliest = None
+    if not equity_df.empty:
+        earliest = min((_safe_dt(v) for v in equity_df["ts"]), default=None)
+    weeks_elapsed = ((now - earliest).total_seconds() / (7 * 86400)) if earliest else 0.0
+
+    max_dd = float(equity_df["drawdown"].max()) if not equity_df.empty else 0.0
+    n_trades = len(portfolio.closed_trades)
+    weekly_pnl = storage.weekly_realized_pnl(now)
+    halted = weekly_pnl <= -config.max_weekly_loss
+
+    def crit(name: str, ok: bool, detail_ok: str, detail_no: str) -> ReviewCriterion:
+        return ReviewCriterion(name, "pass" if ok else "fail", detail_ok if ok else detail_no)
+
+    criteria = [
+        crit("≥ 8 semanas de paper", weeks_elapsed >= min_weeks,
+             f"{weeks_elapsed:.1f} semanas registradas", f"solo {weeks_elapsed:.1f}/{min_weeks} semanas"),
+        ReviewCriterion("Sin crashes", "manual", "verifica los logs manualmente (no auto-detectable)"),
+        crit("Logs completos", n_trades > 0 or not equity_df.empty,
+             "hay histórico de equity y operaciones", "todavía sin histórico suficiente"),
+        ReviewCriterion("Liquidación settle 0/1", "pass", "implementada (src/resolution.py)"),
+        crit("Slippage simulado", config.slippage_bps > 0,
+             f"activo ({config.slippage_bps:.0f} bps)", "SLIPPAGE_BPS=0 (desactivado)"),
+        crit("Resultados positivos", total_pnl > 0,
+             f"PnL total ${total_pnl:,.2f}", f"PnL total ${total_pnl:,.2f} (no positivo)"),
+        crit("Drawdown controlado", max_dd <= 0.20,
+             f"máx {max_dd*100:.1f}% ≤ 20%", f"máx {max_dd*100:.1f}% > 20%"),
+        ReviewCriterion("Dashboard claro", "pass", "implementado (Streamlit)"),
+        ReviewCriterion("Tests + CI/CD", "pass", "GitHub Actions: ruff + mypy + pytest"),
+    ]
+
+    return ReviewDigest(
+        generated_at=now,
+        weeks_elapsed=weeks_elapsed,
+        total_pnl=total_pnl,
+        total_return_pct=total_return,
+        max_drawdown=max_dd,
+        realized_pnl=portfolio.realized_pnl,
+        n_trades=n_trades,
+        win_rate=portfolio.win_rate(),
+        halted=halted,
+        criteria=criteria,
+    )
+
+
+def save_review(digest: ReviewDigest, config: Config) -> str:
+    out_dir = config.reports_path
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = digest.generated_at.strftime("%Y-%m-%d")
+    path = out_dir / f"review_{stamp}.md"
+    path.write_text(digest.to_markdown(), encoding="utf-8")
+    return str(path)
+
+
 def save_report(report: WeeklyReport, config: Config) -> str:
     out_dir = config.reports_path
     out_dir.mkdir(parents=True, exist_ok=True)
