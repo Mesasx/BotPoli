@@ -48,6 +48,10 @@ class MarketSnapshot:
     # (e.g. -0.30 = mid dropped 30% over the trend window). Computed per cycle
     # from stored history; transient (not persisted). ``None`` = unknown.
     trend: float | None = None
+    # Recent average midpoint over the signal window — a "reference level" the
+    # value strategy compares the current ask against. Transient; ``None`` until
+    # enough history has been collected.
+    ref_price: float | None = None
 
     @property
     def mid(self) -> float:
