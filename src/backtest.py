@@ -103,7 +103,7 @@ class Backtester:
 
     def __init__(self, config: Config, strategy: Strategy | None = None):
         self.config = config
-        self.strategy = strategy or build_strategy("simple_threshold", config)
+        self.strategy = strategy or build_strategy(config.strategy_name, config)
         self.risk = RiskManager(config)
         self.executor = PaperExecutor(config)
 
@@ -129,11 +129,13 @@ class Backtester:
             daily_pnl = realized_by_day.get(day_key, 0.0)
             weekly_pnl = realized_by_week.get(wk_key, 0.0)
 
-            # Update trend annotations from accumulated per-token history.
+            # Update trend + reference-price annotations from accumulated history.
             for snap in cycle:
                 hist = price_hist.setdefault(snap.token_id, [])
                 if len(hist) >= 2 and hist[0] > 0:
                     snap.trend = (snap.mid - hist[0]) / hist[0]
+                if hist:
+                    snap.ref_price = sum(hist) / len(hist)
                 hist.append(snap.mid)
                 if len(hist) > cfg.trend_window:
                     del hist[0]

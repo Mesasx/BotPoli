@@ -51,7 +51,7 @@ class PaperEngine:
         self.storage = storage
         self.client = client
         self.scanner = MarketScanner(config, client)
-        self.strategy = strategy or build_strategy("simple_threshold", config)
+        self.strategy = strategy or build_strategy(config.strategy_name, config)
         self.risk = RiskManager(config)
         self.executor = PaperExecutor(config)
         self.resolver = MarketResolver(config, client)
@@ -83,9 +83,9 @@ class PaperEngine:
                 if extra is not None:
                     snap_by_token[pos.token_id] = extra
 
-        # Annotate each snapshot with a short-term trend from stored history.
+        # Annotate each snapshot with trend + reference price from stored history.
         for token_id, snap in snap_by_token.items():
-            snap.trend = self._compute_trend(token_id, snap)
+            snap.trend, snap.ref_price = self._compute_signals(token_id, snap)
 
         # Mark portfolio to the latest mids before deciding exits.
         portfolio.mark_to_market({tid: s.mid for tid, s in snap_by_token.items()})
@@ -177,19 +177,23 @@ class PaperEngine:
         }
         return summary
 
-    def _compute_trend(self, token_id: str, snap: MarketSnapshot) -> float | None:
-        """Fraction change of the mark price over the recent history window.
+    def _compute_signals(
+        self, token_id: str, snap: MarketSnapshot
+    ) -> tuple[float | None, float | None]:
+        """Trend (fractional move) and reference price (recent average mid).
 
-        Uses the oldest midpoint in the window as the reference. ``None`` when
-        there isn't enough history yet (so trend exits don't fire spuriously).
+        Both come from stored history and are ``None`` until enough history
+        exists, so trend exits and value entries don't fire on a cold start.
         """
         if self.config.trend_window <= 1:
-            return None
+            return None, None
         hist = self.storage.price_history(token_id, self.config.trend_window)
         if len(hist) < 2 or hist[0] <= 0:
-            return None
+            return None, None
         current = snap.mid or hist[-1]
-        return (current - hist[0]) / hist[0]
+        trend = (current - hist[0]) / hist[0]
+        ref = sum(hist) / len(hist)
+        return trend, ref
 
     def _snapshot_for_position(self, pos) -> MarketSnapshot | None:
         quote = self.client.get_quote(pos.token_id)

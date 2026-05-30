@@ -150,9 +150,91 @@ class SimpleThresholdStrategy(Strategy):
         )
 
 
+class ValueStrategy(SimpleThresholdStrategy):
+    """A more sensible, "with criteria" entry rule (Level A intelligence).
+
+    It deliberately avoids the naive "buy anything cheap" behaviour that lands the
+    bot in absurd longshots. It only enters when **all** of these hold:
+
+    * the outcome sits in a *sane probability band* (``MIN_ENTRY_PROB`` ..
+      ``MAX_ENTRY_PROB``) — no lottery-ticket longshots, no near-certain favourites;
+    * the market is *real and tradable*: enough liquidity AND volume, tight spread,
+      enough time to close;
+    * there is a measurable *edge*: the current ask is at a discount of at least
+      ``MIN_EDGE`` versus the outcome's recent reference price (its average mid over
+      the signal window) — i.e. we buy a genuine dip, not just a low absolute price;
+    * the price is **not** in a strong downtrend (don't catch a falling knife).
+
+    Honest note: this is a disciplined heuristic, not a true forecast of the
+    outcome. Without external information the market price is already a strong
+    estimate; this strategy just trades quality dips within a sane band and manages
+    risk. It is not guaranteed to be profitable. Exits are inherited (TP / SL /
+    pre-expiry / trend).
+    """
+
+    name = "value"
+
+    def _entry_signal(self, snap: MarketSnapshot) -> Signal:
+        cfg = self.config
+        outcome = snap.outcome.strip().upper()
+
+        if outcome == "NO" and not cfg.allow_no:
+            return self._signal(snap, HOLD, snap.best_ask, "NO outcomes disabled (ALLOW_NO=false)")
+        if outcome not in ("YES", "NO"):
+            return self._signal(snap, HOLD, snap.best_ask, f"unsupported outcome '{snap.outcome}'")
+        if snap.best_ask <= 0 or snap.best_ask >= 1:
+            return self._signal(snap, HOLD, snap.best_ask, "no valid ask price")
+
+        # 1) sane probability band (avoid longshots and near-certain favourites)
+        if not (cfg.min_entry_prob <= snap.mid <= cfg.max_entry_prob):
+            return self._signal(
+                snap, HOLD, snap.best_ask,
+                f"prob {snap.mid:.2f} outside band "
+                f"[{cfg.min_entry_prob:.2f}, {cfg.max_entry_prob:.2f}]",
+            )
+
+        # 2) market quality
+        if snap.spread > cfg.max_spread:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                f"spread {snap.spread:.3f} > {cfg.max_spread:.3f}")
+        if snap.liquidity < cfg.min_liquidity:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                f"liquidity {snap.liquidity:.0f} < {cfg.min_liquidity:.0f}")
+        if snap.volume < cfg.min_volume:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                f"volume {snap.volume:.0f} < MIN_VOLUME {cfg.min_volume:.0f}")
+        if snap.hours_to_close is not None and snap.hours_to_close < cfg.min_hours_to_close:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                f"closes in {snap.hours_to_close:.1f}h < {cfg.min_hours_to_close:.0f}")
+
+        # 3) need a reference to judge value; never trade blind on a cold start
+        if snap.ref_price is None or snap.ref_price <= 0:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                "sin referencia todavía (acumulando histórico)")
+        edge = (snap.ref_price - snap.best_ask) / snap.ref_price
+        if edge < cfg.min_edge:
+            return self._signal(
+                snap, HOLD, snap.best_ask,
+                f"edge {edge*100:.1f}% < MIN_EDGE {cfg.min_edge*100:.0f}% "
+                f"(ask {snap.best_ask:.3f} vs ref {snap.ref_price:.3f})",
+            )
+
+        # 4) don't buy into a strong downtrend
+        if snap.trend is not None and snap.trend <= -cfg.stop_loss_pct:
+            return self._signal(snap, HOLD, snap.best_ask,
+                                f"downtrend {snap.trend*100:.1f}%; skip")
+
+        return self._signal(
+            snap, BUY, snap.best_ask,
+            f"BUY {outcome}: edge {edge*100:.1f}% (ask {snap.best_ask:.3f} vs "
+            f"ref {snap.ref_price:.3f}), prob {snap.mid:.2f}, vol {snap.volume:.0f}",
+        )
+
+
 def build_strategy(name: str, config: Config) -> Strategy:
     strategies: dict[str, type[Strategy]] = {
         SimpleThresholdStrategy.name: SimpleThresholdStrategy,
+        ValueStrategy.name: ValueStrategy,
     }
-    cls = strategies.get(name, SimpleThresholdStrategy)
+    cls = strategies.get(name, ValueStrategy)
     return cls(config)

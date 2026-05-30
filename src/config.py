@@ -60,6 +60,13 @@ class Config:
 
     # Strategy toggles
     allow_no: bool = False
+    strategy_name: str = "value"          # "value" (smart) | "simple_threshold"
+
+    # Value strategy ("smart") parameters
+    min_entry_prob: float = 0.20          # ignore longshots below this implied prob
+    max_entry_prob: float = 0.80          # ignore near-certain favourites above this
+    min_volume: float = 5000.0            # require real traded volume (USDC)
+    min_edge: float = 0.04                # required discount vs the recent reference
 
     # Sizing / risk limits (USDC)
     max_trade_size: float = 5.0
@@ -152,6 +159,11 @@ def load_config(env_file: str | os.PathLike | None = None) -> Config:
         live_trading=_get_bool("LIVE_TRADING", False),
         initial_balance=_get_float("INITIAL_PAPER_BALANCE_USDC", 1000.0),
         allow_no=_get_bool("ALLOW_NO", False),
+        strategy_name=os.getenv("STRATEGY", "value").strip(),
+        min_entry_prob=_get_float("MIN_ENTRY_PROB", 0.20),
+        max_entry_prob=_get_float("MAX_ENTRY_PROB", 0.80),
+        min_volume=_get_float("MIN_VOLUME", 5000.0),
+        min_edge=_get_float("MIN_EDGE", 0.04),
         max_trade_size=_get_float("MAX_TRADE_SIZE_USDC", 5.0),
         max_trade_pct=_get_float("MAX_TRADE_PCT", 0.02),
         max_position_size=_get_float("MAX_POSITION_SIZE_USDC", 25.0),

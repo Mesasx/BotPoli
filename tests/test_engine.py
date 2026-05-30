@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from src.main import PaperEngine
 from src.storage import Storage
+from src.strategy import build_strategy
 
 from .conftest import FakeClient, sample_gamma_market
+
+
+def _threshold_engine(config, storage, client):
+    """Engine pinned to the simple threshold strategy (these tests assert that
+    behaviour; the default strategy is now the smarter ``value`` one)."""
+    return PaperEngine(config, storage, client,
+                       strategy=build_strategy("simple_threshold", config))
 
 
 def test_run_cycle_opens_position_on_cheap_yes(config):
@@ -18,7 +26,7 @@ def test_run_cycle_opens_position_on_cheap_yes(config):
     )
     storage = Storage(config)
     try:
-        engine = PaperEngine(config, storage, client)
+        engine = _threshold_engine(config, storage, client)
         summary = engine.run_cycle()
 
         assert summary["buys"] == 1          # YES bought; NO blocked by ALLOW_NO=false
@@ -44,7 +52,7 @@ def test_run_cycle_exits_on_take_profit(config):
     }
     storage = Storage(config)
     try:
-        engine = PaperEngine(config, storage, FakeClient([market], buy_quotes))
+        engine = _threshold_engine(config, storage, FakeClient([market], buy_quotes))
         engine.run_cycle()
         assert storage.load_portfolio().open_position_count() == 1
 
@@ -53,7 +61,7 @@ def test_run_cycle_exits_on_take_profit(config):
             "tok_yes": {"best_bid": 0.55, "best_ask": 0.56, "midpoint": 0.555, "spread": 0.01},
             "tok_no": {"best_bid": 0.44, "best_ask": 0.45, "midpoint": 0.445, "spread": 0.01},
         }
-        engine2 = PaperEngine(config, storage, FakeClient([market], tp_quotes))
+        engine2 = _threshold_engine(config, storage, FakeClient([market], tp_quotes))
         summary = engine2.run_cycle()
         assert summary["sells"] == 1
 
@@ -75,7 +83,7 @@ def test_run_cycle_settles_resolved_market(config):
     storage = Storage(config)
     try:
         # Cycle 1: open a YES position at ~0.40
-        engine = PaperEngine(config, storage, FakeClient([market], buy_quotes))
+        engine = _threshold_engine(config, storage, FakeClient([market], buy_quotes))
         engine.run_cycle()
         assert storage.load_portfolio().open_position_count() == 1
 
@@ -85,7 +93,7 @@ def test_run_cycle_settles_resolved_market(config):
         resolved["umaResolutionStatus"] = "resolved"
         resolved["outcomePrices"] = json.dumps(["1", "0"])
         client2 = FakeClient([], buy_quotes, markets_by_id={"12345": resolved})
-        engine2 = PaperEngine(config, storage, client2)
+        engine2 = _threshold_engine(config, storage, client2)
         summary = engine2.run_cycle()
 
         assert summary["settled"] == 1

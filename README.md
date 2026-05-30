@@ -237,14 +237,29 @@ Muestra:
 - Se calcula **PnL realizado y no realizado**, **equity**, **drawdown**,
   **win rate** y **exposición por mercado/total**.
 
-### Estrategia inicial (`SimpleThresholdStrategy`)
-- **Entrada (BUY)**: sin posición previa, outcome YES (o NO si `ALLOW_NO=true`),
-  `best_ask ≤ ENTRY_PRICE_MAX`, `spread ≤ MAX_SPREAD`,
-  `liquidity ≥ MIN_LIQUIDITY` y faltan `≥ MIN_HOURS_TO_CLOSE` para el cierre.
-- **Salida (SELL)**: take profit (`≥ TAKE_PROFIT_PCT`), stop loss
-  (`≤ -STOP_LOSS_PCT`), cierre antes del vencimiento
-  (`≤ EXIT_HOURS_BEFORE_CLOSE`) o **cambio fuerte de tendencia**
-  (la mid cae `≥ TREND_EXIT_PCT` sobre la ventana `TREND_WINDOW`).
+### Estrategias disponibles (elige con `STRATEGY` en `.env`)
+
+**`value` — con criterio (predeterminada).** Pensada para **no** meterse en
+apuestas absurdas:
+- **Entrada (BUY)** solo si, a la vez: la probabilidad implícita está en una
+  **banda sensata** (`MIN_ENTRY_PROB`..`MAX_ENTRY_PROB`, sin longshots ni
+  favoritos casi seguros); el mercado es **real** (`liquidity ≥ MIN_LIQUIDITY`,
+  `volume ≥ MIN_VOLUME`, `spread ≤ MAX_SPREAD`, tiempo suficiente); hay una
+  **ventaja medible** (el ask está con un descuento `≥ MIN_EDGE` frente al precio
+  de referencia reciente — compra un *dip*, no un precio bajo cualquiera); y **no**
+  hay una tendencia bajista fuerte (no atrapar un cuchillo cayendo).
+- > **Nota honesta**: es una heurística disciplinada, **no** una predicción del
+  > resultado. Sin información externa, el precio de mercado ya es una buena
+  > estimación; esta estrategia solo opera *dips* de calidad dentro de una banda y
+  > gestiona el riesgo. **No garantiza ganancias.** (El "experto con IA" será el
+  > Nivel B, en un PR posterior.)
+
+**`simple_threshold` — básica.** La original: compra YES si `best_ask ≤
+ENTRY_PRICE_MAX` con spread/liquidez/tiempo OK. Útil como referencia/baseline.
+
+- **Salida (SELL)** (ambas estrategias): take profit (`≥ TAKE_PROFIT_PCT`), stop
+  loss (`≤ -STOP_LOSS_PCT`), cierre antes del vencimiento
+  (`≤ EXIT_HOURS_BEFORE_CLOSE`) o **cambio fuerte de tendencia** (`TREND_EXIT_PCT`).
 - **Liquidación por resolución**: independientemente de la estrategia, el motor
   liquida automáticamente cualquier posición cuyo mercado se haya **resuelto**
   (settle a 1.0 si ganó, 0.0 si perdió) — ver §12.
@@ -297,7 +312,7 @@ dashboard) genera un resumen pensado para revisar el bot en ~15 min/semana:
 ## 8. Tests
 
 ```bash
-pytest                       # 80 tests
+pytest                       # 89 tests
 # o el set completo de CI (lint + tipos + tests):
 pip install -r requirements-dev.txt
 ruff check src tests && mypy src && pytest -q

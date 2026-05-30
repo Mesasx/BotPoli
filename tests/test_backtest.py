@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from src.backtest import Backtester, group_into_cycles
 from src.models import utcnow
+from src.strategy import build_strategy
 from tests.conftest import make_snapshot
 
 
@@ -49,7 +50,7 @@ def test_backtest_runs_and_reports_metrics(config):
         _snap_at(t0 + timedelta(seconds=30), token_id="tok_yes", outcome="YES",
                  best_bid=0.55, best_ask=0.56, midpoint=0.555),
     ]
-    result = Backtester(config).run(history)
+    result = Backtester(config, build_strategy("simple_threshold", config)).run(history)
     assert result.cycles == 2
     assert result.n_buys == 1
     assert result.n_sells == 1
@@ -63,3 +64,17 @@ def test_backtest_empty_history(config):
     assert result.cycles == 0
     assert result.total_pnl == 0.0
     assert result.final_equity == config.initial_balance
+
+
+def test_backtest_with_value_strategy_runs(config):
+    # Three cycles so the value strategy gets a reference price; a dip in c3.
+    t0 = utcnow()
+    history = []
+    # A *moderate* dip (between MIN_EDGE 4% and the 10% downtrend guard).
+    for i, (ask, bid, mid) in enumerate([(0.46, 0.45, 0.455), (0.46, 0.45, 0.455), (0.43, 0.42, 0.43)]):
+        history.append(_snap_at(t0 + timedelta(seconds=30 * i), token_id="tok_yes",
+                                outcome="YES", best_ask=ask, best_bid=bid, midpoint=mid,
+                                volume=20000.0, liquidity=2000.0))
+    result = Backtester(config).run(history)   # default = value strategy
+    assert result.cycles == 3
+    assert result.n_buys >= 1   # buys the dip once a reference exists
